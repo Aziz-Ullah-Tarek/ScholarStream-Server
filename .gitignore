@@ -2,3 +2,8 @@ node_modules/
 .env
 .env.local
 *.log
+
+# Firebase Admin SDK credentials
+Firebase/
+firebaseAdminSDK.json
+*.json
