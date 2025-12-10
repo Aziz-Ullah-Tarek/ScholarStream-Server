@@ -34,6 +34,7 @@ async function run() {
     const applicationsCollection = database.collection("applications");
     const usersCollection = database.collection("users");
     const successStoriesCollection = database.collection("success-stories");
+    const reviewsCollection = database.collection("reviews");
 
     // Store collections in app.locals for middleware access
     app.locals.usersCollection = usersCollection;
@@ -156,15 +157,188 @@ async function run() {
     });
 
     // Update application status (Moderator/Admin)
-    app.patch('/api/applications/:id', async (req, res) => {
+    app.patch('/api/applications/:id/status', verifyToken, isModeratorOrAdmin, async (req, res) => {
       try {
+        const { applicationStatus, feedback } = req.body;
+        const updateData = { applicationStatus };
+        if (feedback) updateData.feedback = feedback;
+
         const result = await applicationsCollection.updateOne(
           { _id: new ObjectId(req.params.id) },
-          { $set: { status: req.body.status, feedback: req.body.feedback } }
+          { $set: updateData }
         );
         res.json({ message: 'Application status updated', modifiedCount: result.modifiedCount });
       } catch (error) {
         res.status(500).json({ message: 'Error updating application', error: error.message });
+      }
+    });
+
+    // Update payment status
+    app.patch('/api/applications/:id/payment', verifyToken, async (req, res) => {
+      try {
+        const { paymentStatus } = req.body;
+        const result = await applicationsCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { paymentStatus } }
+        );
+        res.json({ message: 'Payment status updated', modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).json({ message: 'Error updating payment status', error: error.message });
+      }
+    });
+
+    // Delete application (Admin only)
+    app.delete('/api/applications/:id', verifyToken, isAdmin, async (req, res) => {
+      try {
+        const result = await applicationsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json({ message: 'Application deleted successfully', deletedCount: result.deletedCount });
+      } catch (error) {
+        res.status(500).json({ message: 'Error deleting application', error: error.message });
+      }
+    });
+
+    // Get application statistics
+    app.get('/api/applications/stats/summary', verifyToken, isAdmin, async (req, res) => {
+      try {
+        const total = await applicationsCollection.countDocuments();
+        const pending = await applicationsCollection.countDocuments({ applicationStatus: 'pending' });
+        const processing = await applicationsCollection.countDocuments({ applicationStatus: 'processing' });
+        const completed = await applicationsCollection.countDocuments({ applicationStatus: 'completed' });
+        const rejected = await applicationsCollection.countDocuments({ applicationStatus: 'rejected' });
+
+        res.json({
+          total,
+          byStatus: { pending, processing, completed, rejected }
+        });
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching statistics', error: error.message });
+      }
+    });
+
+    // ============= Reviews API Routes =============
+
+    // Get all reviews
+    app.get('/api/reviews', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection.find().sort({ reviewDate: -1 }).toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching reviews', error: error.message });
+      }
+    });
+
+    // Get reviews by scholarship ID
+    app.get('/api/reviews/scholarship/:scholarshipId', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection.find({ scholarshipId: req.params.scholarshipId }).sort({ reviewDate: -1 }).toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching scholarship reviews', error: error.message });
+      }
+    });
+
+    // Get reviews by user email
+    app.get('/api/reviews/user/:email', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection.find({ userEmail: req.params.email }).sort({ reviewDate: -1 }).toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching user reviews', error: error.message });
+      }
+    });
+
+    // Create a review (Students only)
+    app.post('/api/reviews', verifyToken, async (req, res) => {
+      try {
+        const reviewData = {
+          ...req.body,
+          reviewDate: new Date().toISOString()
+        };
+        const result = await reviewsCollection.insertOne(reviewData);
+        res.status(201).json({ message: 'Review submitted successfully', insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).json({ message: 'Error submitting review', error: error.message });
+      }
+    });
+
+    // Update a review (Own review only)
+    app.put('/api/reviews/:id', verifyToken, async (req, res) => {
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        
+        if (!review) {
+          return res.status(404).json({ message: 'Review not found' });
+        }
+
+        // Check if user owns this review
+        if (review.userEmail !== req.user.email) {
+          return res.status(403).json({ message: 'You can only edit your own reviews' });
+        }
+
+        const { ratingPoint, reviewComment } = req.body;
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { ratingPoint, reviewComment, updatedAt: new Date().toISOString() } }
+        );
+
+        res.json({ message: 'Review updated successfully', modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(500).json({ message: 'Error updating review', error: error.message });
+      }
+    });
+
+    // Delete a review (Own review or Admin)
+    app.delete('/api/reviews/:id', verifyToken, async (req, res) => {
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        
+        if (!review) {
+          return res.status(404).json({ message: 'Review not found' });
+        }
+
+        // Get user role
+        const user = await usersCollection.findOne({ email: req.user.email });
+        
+        // Check if user owns this review or is admin
+        if (review.userEmail !== req.user.email && user?.role !== 'admin') {
+          return res.status(403).json({ message: 'You can only delete your own reviews' });
+        }
+
+        const result = await reviewsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json({ message: 'Review deleted successfully', deletedCount: result.deletedCount });
+      } catch (error) {
+        res.status(500).json({ message: 'Error deleting review', error: error.message });
+      }
+    });
+
+    // Get review statistics for a scholarship
+    app.get('/api/reviews/stats/:scholarshipId', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection.find({ scholarshipId: req.params.scholarshipId }).toArray();
+        
+        if (reviews.length === 0) {
+          return res.json({
+            totalReviews: 0,
+            averageRating: 0,
+            ratingDistribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
+          });
+        }
+
+        const totalRating = reviews.reduce((sum, review) => sum + review.ratingPoint, 0);
+        const averageRating = (totalRating / reviews.length).toFixed(1);
+
+        const ratingDistribution = reviews.reduce((acc, review) => {
+          acc[review.ratingPoint] = (acc[review.ratingPoint] || 0) + 1;
+          return acc;
+        }, { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 });
+
+        res.json({
+          totalReviews: reviews.length,
+          averageRating: parseFloat(averageRating),
+          ratingDistribution
+        });
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching review statistics', error: error.message });
       }
     });
 
