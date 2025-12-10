@@ -7,14 +7,10 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection URI
 const uri = process.env.MONGO_URI;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -25,10 +21,8 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server
     await client.connect();
     
-    // Database and Collections
     const database = client.db("ScholarStream");
     const scholarshipsCollection = database.collection("scholarships-collection");
     const applicationsCollection = database.collection("applications");
@@ -36,19 +30,14 @@ async function run() {
     const successStoriesCollection = database.collection("success-stories");
     const reviewsCollection = database.collection("reviews");
 
-    // Store collections in app.locals for middleware access
     app.locals.usersCollection = usersCollection;
-
     console.log("✅ Successfully connected to MongoDB!");
 
-    // ============= API Routes =============
-
-    // Test Route
+    // Test & Health Routes
     app.get('/', (req, res) => {
       res.send('ScholarStream Backend is Running 🎓');
     });
 
-    // Health Check
     app.get('/health', (req, res) => {
       res.json({ status: 'OK', message: 'Server is healthy' });
     });
@@ -57,9 +46,7 @@ async function run() {
     app.get('/api/users/check-role/:email', async (req, res) => {
       try {
         const user = await usersCollection.findOne({ email: req.params.email });
-        if (!user) {
-          return res.json({ role: 'student' }); // Default role
-        }
+        if (!user) return res.json({ role: 'student' });
         res.json({ role: user.role || 'student' });
       } catch (error) {
         res.status(500).json({ message: 'Error checking user role', error: error.message });
@@ -82,9 +69,7 @@ async function run() {
     app.get('/api/scholarships/:id', async (req, res) => {
       try {
         const scholarship = await scholarshipsCollection.findOne({ _id: new ObjectId(req.params.id) });
-        if (!scholarship) {
-          return res.status(404).json({ message: 'Scholarship not found' });
-        }
+        if (!scholarship) return res.status(404).json({ message: 'Scholarship not found' });
         res.json(scholarship);
       } catch (error) {
         res.status(500).json({ message: 'Error fetching scholarship', error: error.message });
@@ -126,7 +111,6 @@ async function run() {
 
     // ============= Applications Routes =============
 
-    // Get all applications
     app.get('/api/applications', async (req, res) => {
       try {
         const applications = await applicationsCollection.find().toArray();
@@ -136,7 +120,6 @@ async function run() {
       }
     });
 
-    // Get applications by user email
     app.get('/api/applications/user/:email', async (req, res) => {
       try {
         const applications = await applicationsCollection.find({ userEmail: req.params.email }).toArray();
@@ -146,7 +129,6 @@ async function run() {
       }
     });
 
-    // Create application
     app.post('/api/applications', async (req, res) => {
       try {
         const result = await applicationsCollection.insertOne(req.body);
@@ -173,7 +155,6 @@ async function run() {
       }
     });
 
-    // Update payment status
     app.patch('/api/applications/:id/payment', verifyToken, async (req, res) => {
       try {
         const { paymentStatus } = req.body;
@@ -187,7 +168,6 @@ async function run() {
       }
     });
 
-    // Delete application (Admin only)
     app.delete('/api/applications/:id', verifyToken, isAdmin, async (req, res) => {
       try {
         const result = await applicationsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
@@ -197,7 +177,7 @@ async function run() {
       }
     });
 
-    // Get application statistics
+    // Get application statistics (Admin)
     app.get('/api/applications/stats/summary', verifyToken, isAdmin, async (req, res) => {
       try {
         const total = await applicationsCollection.countDocuments();
@@ -215,9 +195,8 @@ async function run() {
       }
     });
 
-    // ============= Reviews API Routes =============
+    // ============= Reviews Routes =============
 
-    // Get all reviews
     app.get('/api/reviews', async (req, res) => {
       try {
         const reviews = await reviewsCollection.find().sort({ reviewDate: -1 }).toArray();
@@ -227,7 +206,6 @@ async function run() {
       }
     });
 
-    // Get reviews by scholarship ID
     app.get('/api/reviews/scholarship/:scholarshipId', async (req, res) => {
       try {
         const reviews = await reviewsCollection.find({ scholarshipId: req.params.scholarshipId }).sort({ reviewDate: -1 }).toArray();
@@ -237,7 +215,6 @@ async function run() {
       }
     });
 
-    // Get reviews by user email
     app.get('/api/reviews/user/:email', async (req, res) => {
       try {
         const reviews = await reviewsCollection.find({ userEmail: req.params.email }).sort({ reviewDate: -1 }).toArray();
@@ -247,13 +224,9 @@ async function run() {
       }
     });
 
-    // Create a review (Students only)
     app.post('/api/reviews', verifyToken, async (req, res) => {
       try {
-        const reviewData = {
-          ...req.body,
-          reviewDate: new Date().toISOString()
-        };
+        const reviewData = { ...req.body, reviewDate: new Date().toISOString() };
         const result = await reviewsCollection.insertOne(reviewData);
         res.status(201).json({ message: 'Review submitted successfully', insertedId: result.insertedId });
       } catch (error) {
@@ -261,45 +234,29 @@ async function run() {
       }
     });
 
-    // Update a review (Own review only)
     app.put('/api/reviews/:id', verifyToken, async (req, res) => {
       try {
         const review = await reviewsCollection.findOne({ _id: new ObjectId(req.params.id) });
-        
-        if (!review) {
-          return res.status(404).json({ message: 'Review not found' });
-        }
-
-        // Check if user owns this review
-        if (review.userEmail !== req.user.email) {
-          return res.status(403).json({ message: 'You can only edit your own reviews' });
-        }
+        if (!review) return res.status(404).json({ message: 'Review not found' });
+        if (review.userEmail !== req.user.email) return res.status(403).json({ message: 'You can only edit your own reviews' });
 
         const { ratingPoint, reviewComment } = req.body;
         const result = await reviewsCollection.updateOne(
           { _id: new ObjectId(req.params.id) },
           { $set: { ratingPoint, reviewComment, updatedAt: new Date().toISOString() } }
         );
-
         res.json({ message: 'Review updated successfully', modifiedCount: result.modifiedCount });
       } catch (error) {
         res.status(500).json({ message: 'Error updating review', error: error.message });
       }
     });
 
-    // Delete a review (Own review or Admin)
     app.delete('/api/reviews/:id', verifyToken, async (req, res) => {
       try {
         const review = await reviewsCollection.findOne({ _id: new ObjectId(req.params.id) });
-        
-        if (!review) {
-          return res.status(404).json({ message: 'Review not found' });
-        }
+        if (!review) return res.status(404).json({ message: 'Review not found' });
 
-        // Get user role
         const user = await usersCollection.findOne({ email: req.user.email });
-        
-        // Check if user owns this review or is admin
         if (review.userEmail !== req.user.email && user?.role !== 'admin') {
           return res.status(403).json({ message: 'You can only delete your own reviews' });
         }
@@ -311,46 +268,36 @@ async function run() {
       }
     });
 
-    // Get review statistics for a scholarship
+    // Get review statistics
     app.get('/api/reviews/stats/:scholarshipId', async (req, res) => {
       try {
         const reviews = await reviewsCollection.find({ scholarshipId: req.params.scholarshipId }).toArray();
         
         if (reviews.length === 0) {
-          return res.json({
-            totalReviews: 0,
-            averageRating: 0,
-            ratingDistribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
-          });
+          return res.json({ totalReviews: 0, averageRating: 0, ratingDistribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
         }
 
         const totalRating = reviews.reduce((sum, review) => sum + review.ratingPoint, 0);
         const averageRating = (totalRating / reviews.length).toFixed(1);
-
         const ratingDistribution = reviews.reduce((acc, review) => {
           acc[review.ratingPoint] = (acc[review.ratingPoint] || 0) + 1;
           return acc;
         }, { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 });
 
-        res.json({
-          totalReviews: reviews.length,
-          averageRating: parseFloat(averageRating),
-          ratingDistribution
-        });
+        res.json({ totalReviews: reviews.length, averageRating: parseFloat(averageRating), ratingDistribution });
       } catch (error) {
         res.status(500).json({ message: 'Error fetching review statistics', error: error.message });
       }
     });
 
-    // ============= Users API Routes =============
+    // ============= Users Routes =============
 
-    // Get all users with pagination and filtering (Admin only)
+    // Get all users with pagination (Admin)
     app.get('/api/users', verifyToken, isAdmin, async (req, res) => {
       try {
         const { page = 1, limit = 10, role, search } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
         
-        // Build query
         const query = {};
         if (role) query.role = role;
         if (search) {
@@ -360,101 +307,64 @@ async function run() {
           ];
         }
 
-        const users = await usersCollection
-          .find(query)
-          .skip(skip)
-          .limit(parseInt(limit))
-          .toArray();
-        
+        const users = await usersCollection.find(query).skip(skip).limit(parseInt(limit)).toArray();
         const total = await usersCollection.countDocuments(query);
 
         res.json({
           users,
-          pagination: {
-            total,
-            page: parseInt(page),
-            limit: parseInt(limit),
-            totalPages: Math.ceil(total / parseInt(limit))
-          }
+          pagination: { total, page: parseInt(page), limit: parseInt(limit), totalPages: Math.ceil(total / parseInt(limit)) }
         });
       } catch (error) {
         res.status(500).json({ message: 'Error fetching users', error: error.message });
       }
     });
 
-    // Get user by email
     app.get('/api/users/:email', async (req, res) => {
       try {
         const user = await usersCollection.findOne({ email: req.params.email });
-        if (!user) {
-          return res.status(404).json({ message: 'User not found' });
-        }
+        if (!user) return res.status(404).json({ message: 'User not found' });
         res.json(user);
       } catch (error) {
         res.status(500).json({ message: 'Error fetching user', error: error.message });
       }
     });
 
-    // Create or update user (auto-save on login)
     app.post('/api/users', async (req, res) => {
       try {
         const { email, name, photoURL } = req.body;
-        
-        // Validation
-        if (!email) {
-          return res.status(400).json({ message: 'Email is required' });
-        }
+        if (!email) return res.status(400).json({ message: 'Email is required' });
 
         const userData = {
           email,
           name: name || 'Anonymous',
           photoURL: photoURL || '',
-          role: 'student', // Default role
+          role: 'student',
           updatedAt: new Date()
         };
 
-        // Check if user exists
         const existingUser = await usersCollection.findOne({ email });
         
         if (existingUser) {
-          // Update existing user (preserve role)
           const result = await usersCollection.updateOne(
             { email },
-            { 
-              $set: { 
-                name: userData.name,
-                photoURL: userData.photoURL,
-                updatedAt: userData.updatedAt
-              } 
-            }
+            { $set: { name: userData.name, photoURL: userData.photoURL, updatedAt: userData.updatedAt } }
           );
-          res.json({ 
-            message: 'User updated successfully', 
-            user: { ...existingUser, ...userData },
-            result 
-          });
+          res.json({ message: 'User updated successfully', user: { ...existingUser, ...userData }, result });
         } else {
-          // Create new user
           userData.createdAt = new Date();
           const result = await usersCollection.insertOne(userData);
-          res.status(201).json({ 
-            message: 'User created successfully', 
-            user: userData,
-            insertedId: result.insertedId 
-          });
+          res.status(201).json({ message: 'User created successfully', user: userData, insertedId: result.insertedId });
         }
       } catch (error) {
         res.status(500).json({ message: 'Error saving user', error: error.message });
       }
     });
 
-    // Update user profile (Own profile or Admin)
     app.put('/api/users/:email', verifyToken, async (req, res) => {
       try {
         const { email } = req.params;
         const { name, photoURL } = req.body;
         
-        // Check if user is updating their own profile or is admin
         const userEmail = req.user.email;
         const requestingUser = await usersCollection.findOne({ email: userEmail });
         
@@ -462,20 +372,12 @@ async function run() {
           return res.status(403).json({ message: 'Forbidden: You can only update your own profile' });
         }
 
-        const updateData = {
-          updatedAt: new Date()
-        };
+        const updateData = { updatedAt: new Date() };
         if (name) updateData.name = name;
         if (photoURL !== undefined) updateData.photoURL = photoURL;
 
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: updateData }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ message: 'User not found' });
-        }
+        const result = await usersCollection.updateOne({ email }, { $set: updateData });
+        if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
 
         res.json({ message: 'User profile updated successfully', modifiedCount: result.modifiedCount });
       } catch (error) {
@@ -483,26 +385,19 @@ async function run() {
       }
     });
 
-    // Update user role (Admin only)
+    // Update user role (Admin)
     app.patch('/api/users/:email/role', verifyToken, isAdmin, async (req, res) => {
       try {
         const { email } = req.params;
         const { role } = req.body;
 
-        // Validate role
         const validRoles = ['student', 'moderator', 'admin'];
         if (!validRoles.includes(role)) {
           return res.status(400).json({ message: 'Invalid role. Must be: student, moderator, or admin' });
         }
 
-        const result = await usersCollection.updateOne(
-          { email },
-          { $set: { role, updatedAt: new Date() } }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ message: 'User not found' });
-        }
+        const result = await usersCollection.updateOne({ email }, { $set: { role, updatedAt: new Date() } });
+        if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
 
         res.json({ message: `User role updated to ${role}`, modifiedCount: result.modifiedCount });
       } catch (error) {
@@ -510,21 +405,13 @@ async function run() {
       }
     });
 
-    // Delete user (Admin only)
     app.delete('/api/users/:email', verifyToken, isAdmin, async (req, res) => {
       try {
         const { email } = req.params;
-        
-        // Prevent admin from deleting themselves
-        if (email === req.user.email) {
-          return res.status(400).json({ message: 'You cannot delete your own account' });
-        }
+        if (email === req.user.email) return res.status(400).json({ message: 'You cannot delete your own account' });
 
         const result = await usersCollection.deleteOne({ email });
-        
-        if (result.deletedCount === 0) {
-          return res.status(404).json({ message: 'User not found' });
-        }
+        if (result.deletedCount === 0) return res.status(404).json({ message: 'User not found' });
 
         res.json({ message: 'User deleted successfully', deletedCount: result.deletedCount });
       } catch (error) {
@@ -532,7 +419,7 @@ async function run() {
       }
     });
 
-    // Get user statistics (Admin only)
+    // Get user statistics (Admin)
     app.get('/api/users/stats/summary', verifyToken, isAdmin, async (req, res) => {
       try {
         const totalUsers = await usersCollection.countDocuments();
@@ -542,11 +429,7 @@ async function run() {
 
         res.json({
           total: totalUsers,
-          byRole: {
-            student: studentCount,
-            moderator: moderatorCount,
-            admin: adminCount
-          }
+          byRole: { student: studentCount, moderator: moderatorCount, admin: adminCount }
         });
       } catch (error) {
         res.status(500).json({ message: 'Error fetching user statistics', error: error.message });
@@ -555,7 +438,6 @@ async function run() {
 
     // ============= Success Stories Routes =============
 
-    // Get all success stories
     app.get('/api/success-stories', async (req, res) => {
       try {
         const stories = await successStoriesCollection.find().toArray();
@@ -565,7 +447,6 @@ async function run() {
       }
     });
 
-    // Create success story
     app.post('/api/success-stories', async (req, res) => {
       try {
         const result = await successStoriesCollection.insertOne(req.body);
@@ -582,12 +463,10 @@ async function run() {
 
 run().catch(console.dir);
 
-// Start Server
 app.listen(port, () => {
   console.log(`🚀 Server is running on port ${port}`);
 });
 
-// Handle graceful shutdown
 process.on('SIGINT', async () => {
   await client.close();
   console.log('MongoDB connection closed');
