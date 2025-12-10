@@ -29,9 +29,10 @@ async function run() {
     
     // Database and Collections
     const database = client.db("ScholarStream");
-    const scholarshipsCollection = database.collection("scholarships");
+    const scholarshipsCollection = database.collection("scholarships-collection");
     const applicationsCollection = database.collection("applications");
     const usersCollection = database.collection("users");
+    const successStoriesCollection = database.collection("success-stories");
 
     console.log("✅ Successfully connected to MongoDB!");
 
@@ -187,6 +188,28 @@ async function run() {
         res.json({ message: 'User role updated', modifiedCount: result.modifiedCount });
       } catch (error) {
         res.status(500).json({ message: 'Error updating user role', error: error.message });
+      }
+    });
+
+    // ============= Success Stories Routes =============
+
+    // Get all success stories
+    app.get('/api/success-stories', async (req, res) => {
+      try {
+        const stories = await successStoriesCollection.find().toArray();
+        res.json(stories);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching success stories', error: error.message });
+      }
+    });
+
+    // Create success story
+    app.post('/api/success-stories', async (req, res) => {
+      try {
+        const result = await successStoriesCollection.insertOne(req.body);
+        res.status(201).json({ message: 'Success story created', insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).json({ message: 'Error creating success story', error: error.message });
       }
     });
 
