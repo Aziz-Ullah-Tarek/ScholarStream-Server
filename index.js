@@ -419,21 +419,7 @@ async function run() {
       }
     });
 
-    // Get user statistics (Admin)
-    app.get('/api/users/stats/summary', verifyToken, isAdmin, async (req, res) => {
-      try {
-        const totalUsers = await usersCollection.countDocuments();
-        const studentCount = await usersCollection.countDocuments({ role: 'student' });
-        const moderatorCount = await usersCollection.countDocuments({ role: 'moderator' });
-        const adminCount = await usersCollection.countDocuments({ role: 'admin' });
-
-        res.json({
-          total: totalUsers,
-          byRole: { student: studentCount, moderator: moderatorCount, admin: adminCount }
-        });
-      } catch (error) {
-        res.status(500).json({ message: 'Error fetching user statistics', error: error.message });
-      }
+   
     });
 
     // ============= Success Stories Routes =============
