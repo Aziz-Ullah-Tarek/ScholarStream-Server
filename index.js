@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const { verifyToken, isAdmin, isModeratorOrAdmin } = require('./middleware/authMiddleware');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 require('dotenv').config();
 
 const app = express();
@@ -106,6 +107,37 @@ async function run() {
         res.json({ message: 'Scholarship deleted successfully', deletedCount: result.deletedCount });
       } catch (error) {
         res.status(500).json({ message: 'Error deleting scholarship', error: error.message });
+      }
+    });
+
+    // ============= Stripe Payment Routes =============
+
+    // Create payment intent
+    app.post('/api/create-payment-intent', verifyToken, async (req, res) => {
+      try {
+        const { amount, scholarshipName } = req.body;
+
+        // Create a PaymentIntent with the order amount and currency
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // Stripe expects amount in cents
+          currency: 'usd',
+          description: `Scholarship Application: ${scholarshipName}`,
+          metadata: {
+            userEmail: req.user.email,
+            scholarshipName: scholarshipName
+          },
+          automatic_payment_methods: {
+            enabled: true,
+          },
+        });
+
+        res.json({
+          clientSecret: paymentIntent.client_secret,
+          paymentIntentId: paymentIntent.id
+        });
+      } catch (error) {
+        console.error('Error creating payment intent:', error);
+        res.status(500).json({ message: 'Error creating payment intent', error: error.message });
       }
     });
 
@@ -420,6 +452,23 @@ async function run() {
     });
 
    
+
+
+     // Get user statistics (Admin)
+    app.get('/api/users/stats/summary', verifyToken, isAdmin, async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments();
+        const studentCount = await usersCollection.countDocuments({ role: 'student' });
+        const moderatorCount = await usersCollection.countDocuments({ role: 'moderator' });
+        const adminCount = await usersCollection.countDocuments({ role: 'admin' });
+
+        res.json({
+          total: totalUsers,
+          byRole: { student: studentCount, moderator: moderatorCount, admin: adminCount }
+        });
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching user statistics', error: error.message });
+      }
     });
 
     // ============= Success Stories Routes =============
