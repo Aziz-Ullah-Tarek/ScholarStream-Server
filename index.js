@@ -152,16 +152,7 @@ async function run() {
       }
     });
 
-    // Get application by ID
-    app.get('/api/applications/:id', async (req, res) => {
-      try {
-        const application = await applicationsCollection.findOne({ _id: new ObjectId(req.params.id) });
-        if (!application) return res.status(404).json({ message: 'Application not found' });
-        res.json(application);
-      } catch (error) {
-        res.status(500).json({ message: 'Error fetching application', error: error.message });
-      }
-    });
+   
 
     app.get('/api/applications/user/:email', async (req, res) => {
       try {
