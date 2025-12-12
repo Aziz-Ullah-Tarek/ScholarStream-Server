@@ -66,4 +66,40 @@ const isModeratorOrAdmin = async (req, res, next) => {
   }
 };
 
-module.exports = { verifyToken, isAdmin, isModeratorOrAdmin };
+// Middleware to check if user is moderator only
+const isModerator = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized: User not authenticated' });
+    }
+
+    const userEmail = req.user.email;
+    const usersCollection = req.app.locals.usersCollection;
+    
+    const user = await usersCollection.findOne({ email: userEmail });
+    
+    if (!user || user.role !== 'moderator') {
+      return res.status(403).json({ message: 'Forbidden: Moderator access required' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Moderator check error:', error);
+    return res.status(500).json({ message: 'Error checking moderator status', error: error.message });
+  }
+};
+
+// Alias for verifyAdmin (same as isAdmin)
+const verifyAdmin = isAdmin;
+
+// Alias for verifyModerator (same as isModerator)
+const verifyModerator = isModerator;
+
+module.exports = { 
+  verifyToken, 
+  isAdmin, 
+  isModeratorOrAdmin, 
+  isModerator,
+  verifyAdmin,
+  verifyModerator
+};

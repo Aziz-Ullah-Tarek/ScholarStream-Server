@@ -1,7 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const { verifyToken, isAdmin, isModeratorOrAdmin } = require('./middleware/authMiddleware');
+const { 
+  verifyToken, 
+  isAdmin, 
+  isModeratorOrAdmin, 
+  verifyAdmin, 
+  verifyModerator 
+} = require('./middleware/authMiddleware');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 require('dotenv').config();
 
@@ -56,11 +62,103 @@ async function run() {
 
     // ============= Scholarships Routes =============
     
-    // Get all scholarships
+    /**
+     * GET /api/scholarships
+     * 
+     * Get all scholarships with advanced search, filter, sort, and pagination
+     * 
+     * Query Parameters:
+     * - page (number): Page number for pagination (default: 1)
+     * - limit (number): Number of items per page (default: 10)
+     * - search (string): Search by scholarship name, university name, or degree
+     * - country (string): Filter by university country
+     * - category (string): Filter by subject category
+     * - sortBy (string): Sort field - 'applicationFees' or 'postDate' (default: 'postDate')
+     * - sortOrder (string): Sort order - 'asc' or 'desc' (default: 'desc')
+     * 
+     * Example: /api/scholarships?page=1&limit=10&search=Engineering&country=USA&sortBy=applicationFees&sortOrder=asc
+     * 
+     * Response: { scholarships: [], pagination: {}, filters: {} }
+     */
     app.get('/api/scholarships', async (req, res) => {
       try {
-        const scholarships = await scholarshipsCollection.find().toArray();
-        res.json(scholarships);
+        const { 
+          page = 1, 
+          limit = 10, 
+          search = '', 
+          country = '', 
+          category = '', 
+          sortBy = 'postDate', 
+          sortOrder = 'desc' 
+        } = req.query;
+
+        // Build query object
+        const query = {};
+
+        // Search by scholarship name, university name, or degree
+        if (search) {
+          query.$or = [
+            { scholarshipName: { $regex: search, $options: 'i' } },
+            { universityName: { $regex: search, $options: 'i' } },
+            { degree: { $regex: search, $options: 'i' } }
+          ];
+        }
+
+        // Filter by country
+        if (country) {
+          query.universityCountry = { $regex: country, $options: 'i' };
+        }
+
+        // Filter by category (subject category)
+        if (category) {
+          query.subjectCategory = { $regex: category, $options: 'i' };
+        }
+
+        // Build sort object
+        const sortOptions = {};
+        if (sortBy === 'applicationFees') {
+          sortOptions.applicationFees = sortOrder === 'asc' ? 1 : -1;
+        } else if (sortBy === 'postDate') {
+          sortOptions.postDate = sortOrder === 'asc' ? 1 : -1;
+        } else {
+          // Default sort by post date descending
+          sortOptions.postDate = -1;
+        }
+
+        // Calculate pagination
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Execute query with pagination
+        const scholarships = await scholarshipsCollection
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        // Get total count for pagination
+        const total = await scholarshipsCollection.countDocuments(query);
+
+        // Send response with pagination metadata
+        res.json({
+          scholarships,
+          pagination: {
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(total / limitNum),
+            hasMore: pageNum * limitNum < total
+          },
+          filters: {
+            search,
+            country,
+            category,
+            sortBy,
+            sortOrder
+          }
+        });
       } catch (error) {
         res.status(500).json({ message: 'Error fetching scholarships', error: error.message });
       }
@@ -152,7 +250,16 @@ async function run() {
       }
     });
 
-   
+    // Get application by ID
+    app.get('/api/applications/:id', async (req, res) => {
+      try {
+        const application = await applicationsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!application) return res.status(404).json({ message: 'Application not found' });
+        res.json(application);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching application', error: error.message });
+      }
+    });
 
     app.get('/api/applications/user/:email', async (req, res) => {
       try {
