@@ -36,6 +36,7 @@ async function run() {
     const usersCollection = database.collection("users");
     const successStoriesCollection = database.collection("success-stories");
     const reviewsCollection = database.collection("reviews");
+    const wishlistCollection = database.collection("wishlist");
 
     app.locals.usersCollection = usersCollection;
     console.log("✅ Successfully connected to MongoDB!");
@@ -75,22 +76,28 @@ async function run() {
      * - category (string): Filter by subject category
      * - sortBy (string): Sort field - 'applicationFees' or 'postDate' (default: 'postDate')
      * - sortOrder (string): Sort order - 'asc' or 'desc' (default: 'desc')
+     * - format (string): 'full' for pagination data, omit for backward compatibility (just array)
      * 
-     * Example: /api/scholarships?page=1&limit=10&search=Engineering&country=USA&sortBy=applicationFees&sortOrder=asc
+     * Example: /api/scholarships?page=1&limit=10&search=Engineering&country=USA&sortBy=applicationFees&sortOrder=asc&format=full
      * 
-     * Response: { scholarships: [], pagination: {}, filters: {} }
+     * Response: Array (default) or { scholarships: [], pagination: {}, filters: {} } (with format=full)
      */
     app.get('/api/scholarships', async (req, res) => {
       try {
         const { 
-          page = 1, 
-          limit = 10, 
+          page, 
+          limit, 
           search = '', 
           country = '', 
           category = '', 
           sortBy = 'postDate', 
-          sortOrder = 'desc' 
+          sortOrder = 'desc',
+          format = ''
         } = req.query;
+
+        // Check if any query parameters are provided (except format)
+        const hasQueryParams = page || limit || search || country || category || 
+                               (sortBy && sortBy !== 'postDate') || (sortOrder && sortOrder !== 'desc');
 
         // Build query object
         const query = {};
@@ -125,9 +132,19 @@ async function run() {
           sortOptions.postDate = -1;
         }
 
+        // If no pagination params provided, return all results (backward compatibility)
+        if (!hasQueryParams && format !== 'full') {
+          const scholarships = await scholarshipsCollection
+            .find(query)
+            .sort(sortOptions)
+            .toArray();
+          
+          return res.json(scholarships);
+        }
+
         // Calculate pagination
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
+        const pageNum = parseInt(page) || 1;
+        const limitNum = parseInt(limit) || 10;
         const skip = (pageNum - 1) * limitNum;
 
         // Execute query with pagination
@@ -205,6 +222,97 @@ async function run() {
         res.json({ message: 'Scholarship deleted successfully', deletedCount: result.deletedCount });
       } catch (error) {
         res.status(500).json({ message: 'Error deleting scholarship', error: error.message });
+      }
+    });
+
+    // Get related scholarships (by category)
+    app.get('/api/scholarships/:id/related', async (req, res) => {
+      try {
+        const currentScholarship = await scholarshipsCollection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!currentScholarship) return res.status(404).json({ message: 'Scholarship not found' });
+
+        // Find scholarships with same subject category, excluding current one
+        const relatedScholarships = await scholarshipsCollection
+          .find({
+            _id: { $ne: new ObjectId(req.params.id) },
+            subjectCategory: currentScholarship.subjectCategory
+          })
+          .limit(4)
+          .toArray();
+
+        res.json(relatedScholarships);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching related scholarships', error: error.message });
+      }
+    });
+
+    // ============= Wishlist Routes =============
+
+    // Get user's wishlist
+    app.get('/api/wishlist/:email', verifyToken, async (req, res) => {
+      try {
+        const wishlistItems = await wishlistCollection
+          .find({ userEmail: req.params.email })
+          .sort({ addedAt: -1 })
+          .toArray();
+        res.json(wishlistItems);
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching wishlist', error: error.message });
+      }
+    });
+
+    // Add to wishlist
+    app.post('/api/wishlist', verifyToken, async (req, res) => {
+      try {
+        const { userEmail, scholarshipId, scholarshipName, universityName, universityImage, applicationFees, degree } = req.body;
+        
+        // Check if already in wishlist
+        const existing = await wishlistCollection.findOne({ userEmail, scholarshipId });
+        if (existing) {
+          return res.status(400).json({ message: 'Scholarship already in wishlist' });
+        }
+
+        const wishlistItem = {
+          userEmail,
+          scholarshipId,
+          scholarshipName,
+          universityName,
+          universityImage,
+          applicationFees,
+          degree,
+          addedAt: new Date()
+        };
+
+        const result = await wishlistCollection.insertOne(wishlistItem);
+        res.status(201).json({ message: 'Added to wishlist successfully', insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).json({ message: 'Error adding to wishlist', error: error.message });
+      }
+    });
+
+    // Remove from wishlist
+    app.delete('/api/wishlist/:id', verifyToken, async (req, res) => {
+      try {
+        const result = await wishlistCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'Wishlist item not found' });
+        }
+        res.json({ message: 'Removed from wishlist successfully' });
+      } catch (error) {
+        res.status(500).json({ message: 'Error removing from wishlist', error: error.message });
+      }
+    });
+
+    // Check if scholarship is in wishlist
+    app.get('/api/wishlist/check/:email/:scholarshipId', verifyToken, async (req, res) => {
+      try {
+        const item = await wishlistCollection.findOne({
+          userEmail: req.params.email,
+          scholarshipId: req.params.scholarshipId
+        });
+        res.json({ inWishlist: !!item, wishlistItem: item });
+      } catch (error) {
+        res.status(500).json({ message: 'Error checking wishlist', error: error.message });
       }
     });
 
