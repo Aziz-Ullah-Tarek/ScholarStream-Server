@@ -248,6 +248,139 @@ async function run() {
 
     // ============= Wishlist Routes =============
 
+    // ========== REVIEW ENDPOINTS ==========
+    // Get all reviews for a scholarship
+    app.get('/api/reviews/:scholarshipId', async (req, res) => {
+      try {
+        const { scholarshipId } = req.params;
+        const reviews = await reviewsCollection
+          .find({ scholarshipId })
+          .sort({ reviewDate: -1 })
+          .toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch reviews', error: error.message });
+      }
+    });
+
+    // Get all reviews by a specific user (authenticated)
+    app.get('/api/reviews/user/:email', verifyToken, async (req, res) => {
+      try {
+        const { email } = req.params;
+        const reviews = await reviewsCollection
+          .find({ userEmail: email })
+          .sort({ reviewDate: -1 })
+          .toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch user reviews', error: error.message });
+      }
+    });
+
+    // Add a new review (authenticated)
+    app.post('/api/reviews', verifyToken, async (req, res) => {
+      try {
+        const { scholarshipId, scholarshipName, universityName, userName, userEmail, userImage, ratingPoint, reviewComment } = req.body;
+
+        // Validate required fields
+        if (!scholarshipId || !scholarshipName || !universityName || !userName || !userEmail || !ratingPoint || !reviewComment) {
+          return res.status(400).json({ message: 'All fields are required' });
+        }
+
+        // Check if user already reviewed this scholarship
+        const existingReview = await reviewsCollection.findOne({ scholarshipId, userEmail });
+        if (existingReview) {
+          return res.status(400).json({ message: 'You have already reviewed this scholarship' });
+        }
+
+        const newReview = {
+          scholarshipId,
+          scholarshipName,
+          universityName,
+          userName,
+          userEmail,
+          userImage: userImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=26CCC2&color=fff`,
+          ratingPoint: parseInt(ratingPoint),
+          reviewComment,
+          reviewDate: new Date().toISOString()
+        };
+
+        const result = await reviewsCollection.insertOne(newReview);
+        res.status(201).json({ message: 'Review added successfully', reviewId: result.insertedId });
+      } catch (error) {
+        res.status(500).json({ message: 'Failed to add review', error: error.message });
+      }
+    });
+
+    // Update a review (authenticated)
+    app.put('/api/reviews/:id', verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { ratingPoint, reviewComment } = req.body;
+        const userEmail = req.user.email;
+
+        // Validate fields
+        if (!ratingPoint || !reviewComment) {
+          return res.status(400).json({ message: 'Rating and comment are required' });
+        }
+
+        // Check if review exists and belongs to the user
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+        if (!review) {
+          return res.status(404).json({ message: 'Review not found' });
+        }
+        if (review.userEmail !== userEmail) {
+          return res.status(403).json({ message: 'You can only edit your own reviews' });
+        }
+
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { 
+            $set: { 
+              ratingPoint: parseInt(ratingPoint), 
+              reviewComment,
+              reviewDate: new Date().toISOString()
+            } 
+          }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({ message: 'Review not found or no changes made' });
+        }
+
+        res.json({ message: 'Review updated successfully' });
+      } catch (error) {
+        res.status(500).json({ message: 'Failed to update review', error: error.message });
+      }
+    });
+
+    // Delete a review (authenticated)
+    app.delete('/api/reviews/:id', verifyToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const userEmail = req.user.email;
+
+        // Check if review exists and belongs to the user
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+        if (!review) {
+          return res.status(404).json({ message: 'Review not found' });
+        }
+        if (review.userEmail !== userEmail) {
+          return res.status(403).json({ message: 'You can only delete your own reviews' });
+        }
+
+        const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'Review not found' });
+        }
+
+        res.json({ message: 'Review deleted successfully' });
+      } catch (error) {
+        res.status(500).json({ message: 'Failed to delete review', error: error.message });
+      }
+    });
+
+    // ========== WISHLIST ENDPOINTS ==========
     // Get user's wishlist
     app.get('/api/wishlist/:email', verifyToken, async (req, res) => {
       try {
