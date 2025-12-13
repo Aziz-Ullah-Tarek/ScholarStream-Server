@@ -18,6 +18,7 @@ const port = process.env.PORT || 5000;
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://scholarstream-client36.netlify.app',
   process.env.FRONTEND_URL,
   process.env.VERCEL_URL
 ].filter(Boolean);
@@ -27,8 +28,10 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     
-    // Allow any Vercel preview deployment or allowed origins
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+    // Allow any Vercel/Netlify preview deployment or allowed origins
+    if (allowedOrigins.indexOf(origin) !== -1 || 
+        origin.includes('vercel.app') || 
+        origin.includes('netlify.app')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
