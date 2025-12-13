@@ -14,7 +14,29 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+// CORS configuration for both local and production
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL,
+  process.env.VERCEL_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Allow any Vercel preview deployment or allowed origins
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
 const uri = process.env.MONGO_URI;
@@ -26,29 +48,50 @@ const client = new MongoClient(uri, {
   }
 });
 
+// Global database and collections
+let database;
+let scholarshipsCollection;
+let applicationsCollection;
+let usersCollection;
+let successStoriesCollection;
+let reviewsCollection;
+let wishlistCollection;
+
 async function run() {
   try {
     await client.connect();
     
-    const database = client.db("ScholarStream");
-    const scholarshipsCollection = database.collection("scholarships-collection");
-    const applicationsCollection = database.collection("applications");
-    const usersCollection = database.collection("users");
-    const successStoriesCollection = database.collection("success-stories");
-    const reviewsCollection = database.collection("reviews");
-    const wishlistCollection = database.collection("wishlist");
+    database = client.db("ScholarStream");
+    scholarshipsCollection = database.collection("scholarships-collection");
+    applicationsCollection = database.collection("applications");
+    usersCollection = database.collection("users");
+    successStoriesCollection = database.collection("success-stories");
+    reviewsCollection = database.collection("reviews");
+    wishlistCollection = database.collection("wishlist");
 
     app.locals.usersCollection = usersCollection;
     console.log("✅ Successfully connected to MongoDB!");
+  } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
+  }
+}
 
-    // Test & Health Routes
-    app.get('/', (req, res) => {
-      res.send('ScholarStream Backend is Running 🎓');
-    });
+// Test & Health Routes (available immediately)
+app.get('/', (req, res) => {
+  res.send('ScholarStream Backend is Running 🎓');
+});
 
-    app.get('/health', (req, res) => {
-      res.json({ status: 'OK', message: 'Server is healthy' });
-    });
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is healthy' });
+});
+
+// Middleware to ensure database is connected
+app.use(async (req, res, next) => {
+  if (!isConnected) {
+    await connectToDatabase();
+  }
+  next();
+});
 
     // Check user role
     app.get('/api/users/check-role/:email', async (req, res) => {
@@ -841,16 +884,36 @@ async function run() {
       }
     });
 
+// Initialize database connection
+let isConnected = false;
+
+async function connectToDatabase() {
+  if (isConnected) {
+    return;
+  }
+  
+  try {
+    await run();
+    isConnected = true;
+    console.log('✅ Database connected');
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
+    console.error('❌ Database connection error:', error);
+    throw error;
   }
 }
 
-run().catch(console.dir);
+// Connect immediately
+connectToDatabase();
 
-app.listen(port, () => {
-  console.log(`🚀 Server is running on port ${port}`);
-});
+// For local development
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`🚀 Server is running on port ${port}`);
+  });
+}
+
+// For Vercel serverless - export the app
+module.exports = app;
 
 process.on('SIGINT', async () => {
   await client.close();
