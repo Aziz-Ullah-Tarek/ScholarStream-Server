@@ -1,3 +1,10 @@
+// Load environment variables FIRST
+// In Vercel, dotenv is not needed as env vars are injected
+// But for local development, we need dotenv
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
@@ -8,8 +15,21 @@ const {
   verifyAdmin, 
   verifyModerator 
 } = require('./middleware/authMiddleware');
+
+// Validate Stripe key before initialization
+console.log('🔍 Checking Stripe key...');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('Stripe key exists:', !!process.env.STRIPE_SECRET_KEY);
+
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.error('❌ STRIPE_SECRET_KEY is not set!');
+  console.error('❌ Available env vars:', Object.keys(process.env).filter(k => k.includes('STRIPE')));
+  throw new Error('STRIPE_SECRET_KEY is required');
+} else {
+  console.log('✅ Stripe Secret Key loaded:', process.env.STRIPE_SECRET_KEY.substring(0, 20) + '...');
+}
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -86,6 +106,59 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is healthy' });
+});
+
+// Stripe configuration test endpoint
+app.get('/api/test-stripe-config', (req, res) => {
+  res.json({
+    stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
+    stripeKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 20) + '...' : 'NOT SET',
+    stripeInstanceCreated: !!stripe,
+    nodeEnv: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Test payment intent creation (no auth required for debugging)
+app.get('/api/test-payment-intent', async (req, res) => {
+  try {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    console.log('[Test] Testing payment intent creation...');
+    console.log('[Test] Stripe available:', !!stripe);
+    console.log('[Test] Stripe key present:', !!stripeKey);
+    console.log('[Test] Stripe key length:', stripeKey ? stripeKey.length : 0);
+    console.log('[Test] Stripe key starts with sk_test_:', stripeKey ? stripeKey.startsWith('sk_test_') : false);
+    console.log('[Test] Stripe key first 30:', stripeKey ? stripeKey.substring(0, 30) : 'N/A');
+    console.log('[Test] Stripe key last 10:', stripeKey ? stripeKey.substring(stripeKey.length - 10) : 'N/A');
+    
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: 1000, // $10.00
+      currency: 'usd',
+      description: 'Test payment',
+      automatic_payment_methods: {
+        enabled: true,
+      },
+    });
+    
+    console.log('[Test] Payment intent created:', paymentIntent.id);
+    res.json({
+      success: true,
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret ? 'Present' : 'Missing'
+    });
+  } catch (error) {
+    console.error('[Test] Error:', error.message);
+    console.error('[Test] Error type:', error.type);
+    console.error('[Test] Error code:', error.code);
+    console.error('[Test] Error raw message:', error.raw?.message);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      errorType: error.type,
+      errorCode: error.code,
+      rawMessage: error.raw?.message
+    });
+  }
 });
 
 // Middleware to ensure database is connected
@@ -484,27 +557,82 @@ app.use(async (req, res, next) => {
       try {
         const { amount, scholarshipName } = req.body;
 
-        // Create a PaymentIntent with the order amount and currency
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(amount * 100), // Stripe expects amount in cents
-          currency: 'usd',
-          description: `Scholarship Application: ${scholarshipName}`,
-          metadata: {
-            userEmail: req.user.email,
-            scholarshipName: scholarshipName
+        console.log('[Payment] ===== Payment Request Started =====');
+        console.log('[Payment] User:', req.user?.email);
+        console.log('[Payment] Scholarship:', scholarshipName);
+        console.log('[Payment] Amount:', amount);
+        
+        // Validate inputs
+        if (!amount || amount <= 0) {
+          console.error('[Payment] Invalid amount:', amount);
+          return res.status(400).json({ 
+            message: 'Invalid payment amount',
+            error: 'Amount must be greater than 0'
+          });
+        }
+
+        if (!scholarshipName) {
+          console.error('[Payment] Missing scholarship name');
+          return res.status(400).json({ 
+            message: 'Scholarship name is required',
+            error: 'Missing required field'
+          });
+        }
+
+        console.log('[Payment] Creating Stripe payment intent using fetch API...');
+
+        // Use fetch API instead of Stripe SDK to avoid connection issues
+        const stripeResponse = await fetch('https://api.stripe.com/v1/payment_intents', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
           },
-          automatic_payment_methods: {
-            enabled: true,
-          },
+          body: new URLSearchParams({
+            'amount': Math.round(amount * 100).toString(),
+            'currency': 'usd',
+            'description': `Scholarship Application: ${scholarshipName}`,
+            'metadata[userEmail]': req.user.email,
+            'metadata[scholarshipName]': scholarshipName,
+            'automatic_payment_methods[enabled]': 'true',
+          }).toString()
         });
+
+        if (!stripeResponse.ok) {
+          const errorData = await stripeResponse.json();
+          console.error('[Payment] Stripe API error:', errorData);
+          throw new Error(errorData.error?.message || 'Stripe API error');
+        }
+
+        const paymentIntent = await stripeResponse.json();
+
+        console.log('[Payment] Payment intent created successfully!');
+        console.log('[Payment] Payment Intent ID:', paymentIntent.id);
+        console.log('[Payment] Client Secret:', paymentIntent.client_secret ? 'Present' : 'Missing');
 
         res.json({
           clientSecret: paymentIntent.client_secret,
           paymentIntentId: paymentIntent.id
         });
       } catch (error) {
-        console.error('Error creating payment intent:', error);
-        res.status(500).json({ message: 'Error creating payment intent', error: error.message });
+        console.error('[Payment] ===== Payment Error =====');
+        console.error('[Payment] Error type:', error.constructor.name);
+        console.error('[Payment] Error message:', error.message);
+        console.error('[Payment] Error code:', error.code);
+        console.error('[Payment] Error stack:', error.stack);
+        
+        // Check for Stripe-specific errors
+        if (error.type) {
+          console.error('[Payment] Stripe error type:', error.type);
+        }
+        
+        // Send detailed error response
+        res.status(500).json({ 
+          message: 'Error creating payment intent', 
+          error: error.message,
+          errorType: error.type || error.constructor.name,
+          errorCode: error.code
+        });
       }
     });
 
