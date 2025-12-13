@@ -109,25 +109,7 @@ app.use(async (req, res, next) => {
 
     // ============= Scholarships Routes =============
     
-    /**
-     * GET /api/scholarships
-     * 
-     * Get all scholarships with advanced search, filter, sort, and pagination
-     * 
-     * Query Parameters:
-     * - page (number): Page number for pagination (default: 1)
-     * - limit (number): Number of items per page (default: 10)
-     * - search (string): Search by scholarship name, university name, or degree
-     * - country (string): Filter by university country
-     * - category (string): Filter by subject category
-     * - sortBy (string): Sort field - 'applicationFees' or 'postDate' (default: 'postDate')
-     * - sortOrder (string): Sort order - 'asc' or 'desc' (default: 'desc')
-     * - format (string): 'full' for pagination data, omit for backward compatibility (just array)
-     * 
-     * Example: /api/scholarships?page=1&limit=10&search=Engineering&country=USA&sortBy=applicationFees&sortOrder=asc&format=full
-     * 
-     * Response: Array (default) or { scholarships: [], pagination: {}, filters: {} } (with format=full)
-     */
+    
     app.get('/api/scholarships', async (req, res) => {
       try {
         const { 
